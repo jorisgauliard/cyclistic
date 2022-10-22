@@ -1,0 +1,270 @@
+---
+title: "Cyclistic: case study"
+author: "Joris Gauliard"
+date: "2022-09-01"
+output: html_document
+---
+
+# How Does a Bike-Share Navigate Speedy Success?
+
+### Description of the business task
+
+Cyclistic is a fictional bike-share company based in Chicago. The company owns about 5800 bicycles and 600 docking stations.
+
+In-house finance analysts have recently concluded that annual members are much more profitable than casual riders.As a result, the strategy of the director of marketing is clear: converting casual riders into annual members to increase the profitability of the company.
+
+In order to better understand why casual riders would buy a membership, the marketing team is interested in analyzing the historical bike trip data to identify trends.
+
+The result of this analysis, in the form of a data-driven marketing strategy proposal, will be submitted to the executive team for its approval.
+
+The scope of this study is to understand **how annual members and casual riders use Cyclistic bikes differently.**
+
+### Data Source
+
+The [historical bike trip data](https://divvy-tripdata.s3.amazonaws.com/index.html) used in this study has been made available by Motivate International Inc. under this [licence](https://ride.divvybikes.com/data-license-agreement).
+
+Data starting from January 2021 has been downloaded and stored in a folder.
+
+Libraries are loaded for future use
+
+```{r include=FALSE, results='hide'}
+library(tidyverse)
+library(lubridate)
+library(skimr)
+library(geosphere)
+```
+
+Files are combined into one main dataframe (df) using reader::read_csv() and base::rbind()
+
+```{r data-import, cache=TRUE}
+filenames <- list.files(path="data", pattern="*.csv", full.names=TRUE)
+df <- do.call("rbind", lapply(filenames, read_csv, show_col_types = FALSE))
+```
+
+Summary functions help to get to know the dataset
+
+```{r}
+dt.haversine <- function(lat_from, lon_from, lat_to, lon_to, r = 6378137){
+  radians <- pi/180
+  lat_to <- lat_to * radians
+  lat_from <- lat_from * radians
+  lon_to <- lon_to * radians
+  lon_from <- lon_from * radians
+  dLat <- (lat_to - lat_from)
+  dLon <- (lon_to - lon_from)
+  a <- (sin(dLat/2)^2) + (cos(lat_from) * cos(lat_to)) * (sin(dLon/2)^2)
+  return(2 * atan2(sqrt(a), sqrt(1 - a)) * r)
+}
+
+df$ride_distance <- dt.haversine(df$start_lat,df$start_lng,df$end_lat,df$end_lng)
+df$ride_distance <- as.integer(df$ride_distance)
+```
+
+
+```{r summary, cache=TRUE}
+#skim(df)
+#head(df)
+str(df)
+#glimpse(df)
+#colnames(df)
+#skim_without_charts(df)
+```
+
+*Cleaning and sorting the data to prepare for analysis*
+
+We start by removing the columns we do not need for this analysis. We then create few date-related columns to be able to identify ride length patterns as a function of those attributes. We sort the data by ascending ride legnth
+
+```{r cleaning-data}
+Sys.setlocale("LC_TIME", "en_US.UTF-8")
+df_v2<-
+  df%>%
+  select(-c(start_lat,start_lng,end_lat,end_lng,start_station_name,start_station_id,end_station_name,end_station_id))%>%
+  mutate(ride_length = difftime(ended_at,started_at))%>%
+  mutate(date = as.Date(started_at))%>%
+  mutate(year = format(as.Date(started_at), "%Y"))%>%
+  mutate(month = format(as.Date(started_at), "%m"))%>%
+  mutate(day_of_week = weekdays(started_at))%>%
+  mutate(hour_of_day = hour(started_at))%>%
+  arrange(ride_length)
+
+df_v2 <- df_v2[!(df_v2$ride_length <0 ),] #removing observations with a negative ride length
+
+# Convert ride length from factor to numeric
+is.factor(df_v2$ride_length)
+df_v2$ride_length <- as.numeric(as.character(df_v2$ride_length))
+is.numeric(df_v2$ride_length)
+
+df_v2 <- df_v2%>%
+  select(-c(started_at,ended_at))
+
+colnames(df_v2)
+```
+
+Checking if the dataframe contains NA
+
+```{r}
+colSums(is.na(df_v2))
+df_v2 <- na.omit(df_v2)
+#colSums(is.na(df_v2))
+```
+
+We can now consider that the data is prepared for further analysis. The dataset contains `r nrow(df_v2)` observations.
+
+```{r}
+head(df_v2)
+```
+
+
+## Descriptive analysis
+
+Here is a summary of the ride length column (all figures in seconds)
+
+```{r}
+summary(df_v2$ride_length)
+```
+
+The overall ride length average is *`as.integer(mean(df_v2$ride_length)/12))` min*
+
+```{r}
+aggregate(df_v2$ride_length ~ df_v2$member_casual, FUN = mean)
+```
+*The average ride length of casual riders is significantly greater than the average ride length of annual members*
+One way to explain this is that annual members most likely use bikes to go to work, whereas casual riders may use them more for touristic purpose.
+
+```{r}
+aggregate(df_v2$ride_length ~ df_v2$member_casual, FUN = median)
+aggregate(df_v2$ride_length ~ df_v2$member_casual, FUN = max)
+aggregate(df_v2$ride_length ~ df_v2$member_casual, FUN = min)
+```
+*The median ride length of casual riders is significantly greater than the median ride length of annual members*
+
+```{r}
+# Notice that the days of the week are out of order. Let's fix that.
+df_v2$day_of_week <- ordered(df_v2$day_of_week, levels=c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday","Sunday"))
+
+# Now, let's run the average ride time by each day for members vs casual users
+aggregate(df_v2$ride_length ~ df_v2$member_casual + df_v2$day_of_week, FUN = mean)
+
+```
+### Let's visualize the average ride distance by rider type
+```{r}
+df_v2 %>% 
+  group_by(member_casual) %>% 
+  summarise(average_distance = mean(ride_distance)) %>% 
+  arrange(member_casual)  %>% 
+  ggplot(aes(x = member_casual, y = average_distance, fill = member_casual)) +geom_col()
+```
+
+
+### Let's visualize the average ride length by rider type and day of week
+```{r}
+df_v2 %>% 
+  group_by(member_casual, day_of_week) %>% 
+  summarise(number_of_rides = n(),average_duration = mean(ride_length)) %>% 
+  arrange(member_casual, day_of_week)  %>% 
+  ggplot(aes(x = day_of_week, y = average_duration, fill = member_casual)) +geom_col(position = "dodge")
+```
+### Let's visualize the number of rides by rider type and day of week
+```{r}
+df_v2 %>% 
+  group_by(member_casual, day_of_week) %>% 
+  summarise(number_of_rides = n(),average_duration = mean(ride_length)) %>% 
+  arrange(member_casual, day_of_week)  %>%
+  ggplot(aes(x = day_of_week, y = number_of_rides, fill = member_casual)) +geom_col(position = "dodge")
+```
+### Let's visualize the average ride length by rider type and month
+```{r}
+df_v2 %>% 
+  group_by(member_casual, month)%>% 
+  summarise(number_of_rides = n(),average_duration = mean(ride_length))%>% 
+  arrange(member_casual, month)%>%
+  ggplot(aes(x = month, y = average_duration, fill = member_casual)) +geom_col(position = "dodge")
+```
+### Let's visualize the number of rides by rider type and month
+```{r}
+df_v2 %>% 
+  group_by(member_casual, month)%>% 
+  summarise(number_of_rides = n(),average_duration = mean(ride_length))%>% 
+  arrange(member_casual, month)%>%
+  ggplot(aes(x = month, y = number_of_rides, fill = member_casual)) +geom_col(position = "dodge")
+```
+
+### Let's visualize the number of rides by rider type and date
+```{r}
+df_v2 %>% 
+  group_by(member_casual, date)%>% 
+  summarise(number_of_rides = n(),average_duration = mean(ride_length))%>% 
+  arrange(member_casual, date)%>%
+  ggplot(aes(x = date, y = number_of_rides, color = member_casual)) +geom_line()
+```
+
+### Let's visualize the number of rides by rider type and date
+```{r}
+df_v2 %>% 
+  group_by(member_casual, hour_of_day)%>% 
+  summarise(number_of_rides = n(),average_duration = mean(ride_length))%>% 
+  arrange(member_casual, hour_of_day)%>%
+  ggplot(aes(x = hour_of_day, y = number_of_rides, color = member_casual)) +geom_line()
+```
+
+
+
+**The bike trip number of rides has a yearly seasonality which can be explained by the weather: people use less often bikes in the winter in Chicago, no matter if it is an annual member or a casual rider. However, the casual riders number of rides show a weekly seanality whereas it is not the case for annual members ; annual members tend to use their bikes the same way throughout the week, while casual riders more oftenly use bikes on the weekend.**
+
+Casuals: prioritize Cyclistic bikes for leisure
+Members: prioritize cyclistic bikes for commmuting
+
+
+Both User Types:
+Scarcely ride Cyclistic bikes during the colder months
+Pick up and drop off their bikes at roughly the same distance
+
+Casuals:
+Are more numerous during summer and congregate near the bay area
+Tend to be more active during the afternoon and late evenings
+Consistently have longer ride lengths year-round
+Favor docked bikes for lengthy bike trips
+Have a negligible presence during the winter months
+
+Members:
+Have steady average ride lengths year-round
+Are active at all times of the day, more so in the morning and afternoon
+Have trips spread out throughout Chicago's downtown area
+Are more consistent with their bike trips year-round
+
+
+
+Speculations
+A. Casuals primarily use Cyclistic bikes for leisure
+
+We make that assumption based on the fact that casuals:
+
+Bike twice as much on Saturdays and Sundays compared to any other day of the week
+Spend the majority of their bike trips near parks and water
+Spend significantly longer on average on every bike trip, suggesting that they spend time in-between docking stations doing leisurely activities
+Scarcely use Cyclistic bikes in the morning (6 am-noon)
+Do not use Cyclistic bikes often enough to warrant paying for an annual membership
+
+
+
+B. Members get more out of Cyclistic bikes by using them for leisure and commuting consistently
+
+We've drawn that conclusion based on the fact that members:
+
+Rely on bikes consistently each week and year-round, with no notable preference on a single day of the week
+Use Cyclistic bikes often during the rush hours on a typical workday
+Have a large geographical spread in the downtown area, particularly in high urban dense areas
+Are motivated by the economics of an annual membership pass
+
+
+
+
+
+
+
+
+
+
+### Data that would be needed to have a better comprehension of Cyclistic riders
+Age, gender. do we target the right people, potential to be more inclusive?
+Pricing plan, to understand spending behavior of casual users
