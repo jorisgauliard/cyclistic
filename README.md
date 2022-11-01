@@ -7,4 +7,4 @@ Cyclistic is a fictional bike-share company based in Chicago. The company owns a
 
 The scope of this study is to understand how annual members and casual riders use Cyclistic bikes differently.
 
-![alt text](https://github.com/jorisgauliard/cyclistic/figs/image.jpg?raw=true)
+![alt text](https://github.com/jorisgauliard/cyclistic/figs/unnamed-chunk-15-1.png?raw=true)
